@@ -1,0 +1,18 @@
+name: Scheduled Upstream Sync
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # 每天北京时间早上8点执行
+  workflow_dispatch:   # 允许你手动点击按钮立刻同步
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync with Upstream
+        uses: ahmadnassri/action-upstream-sync@v2
+        with:
+          upstream_repository: koala73/worldmonitor
+          upstream_branch: main
+          target_branch: main
+          force: false # 设置为 false 保护你可能做的个性化修改
