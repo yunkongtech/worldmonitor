@@ -784,6 +784,7 @@ export class EventHandlerManager implements AppModule {
         localStorage.removeItem('worldmonitor-panel-col-spans');
         localStorage.removeItem(this.ctx.PANEL_ORDER_KEY);
         localStorage.removeItem(this.ctx.PANEL_ORDER_KEY + '-bottom');
+        localStorage.removeItem(this.ctx.PANEL_ORDER_KEY + '-bottom-set');
         localStorage.removeItem('map-height');
         window.location.reload();
       },
@@ -864,7 +865,7 @@ export class EventHandlerManager implements AppModule {
       liquidity: 0,
     }));
     this.ctx.latestPredictions = predictions;
-    (this.ctx.panels['polymarket'] as PredictionPanel).renderPredictions(predictions);
+    (this.ctx.panels['polymarket'] as PredictionPanel | undefined)?.renderPredictions(predictions);
 
     this.ctx.map?.setHotspotLevels(snapshot.hotspotLevels);
   }
