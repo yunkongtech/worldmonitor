@@ -93,9 +93,9 @@ All five variants run from a single codebase — switch between them with one cl
 </details>
 
 <details>
-<summary><strong>Military & Strategic</strong> — 210+ bases, live flights (ADS-B), naval vessels (AIS), nuclear facilities, spaceports</summary>
+<summary><strong>Military & Strategic</strong> — 210+ bases, live flights (ADS-B), naval vessels (AIS), nuclear facilities, spaceports, orbital surveillance</summary>
 
-[Full details →](./docs/DATA_SOURCES.md#data-layers)
+[Full details →](./docs/DATA_SOURCES.md#data-layers) · [Orbital Surveillance →](./docs/ORBITAL_SURVEILLANCE.md)
 </details>
 
 <details>
@@ -144,6 +144,7 @@ All five variants run from a single codebase — switch between them with one cl
 - **Stablecoin & BTC ETF** — peg health monitoring and spot ETF flow tracking. [Details →](./docs/FINANCE_DATA.md)
 - **Oil & Energy** — WTI/Brent prices, production, inventory via EIA. [Details →](./docs/FINANCE_DATA.md#oil--energy-analytics)
 - **BIS & WTO** — central bank rates, trade policy intelligence. [Details →](./docs/FINANCE_DATA.md)
+- **Premium Stock Analysis** — analysis engine with stored history, backtesting, and daily market brief. [Details →](./docs/PREMIUM_FINANCE.md)
 
 ### Desktop & Mobile
 

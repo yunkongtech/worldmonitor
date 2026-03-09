@@ -1,6 +1,6 @@
 import type { AppContext, AppModule } from '@/app/app-context';
 import type { AirlineIntelPanel } from '@/components/AirlineIntelPanel';
-import type { PanelConfig } from '@/types';
+import type { PanelConfig, MapLayers } from '@/types';
 import type { MapView } from '@/components';
 import type { ClusteredEvent } from '@/types';
 import type { DashboardSnapshot } from '@/services/storage';
@@ -28,6 +28,7 @@ import {
   INTEL_SOURCES,
   DEFAULT_PANELS,
 } from '@/config';
+import { VARIANT_META } from '@/config/variant-meta';
 import {
   saveSnapshot,
   initAisStream,
@@ -61,6 +62,7 @@ export interface EventHandlerCallbacks {
   syncDataFreshnessWithLayers: () => void;
   ensureCorrectZones: () => void;
   refreshOpenCountryBrief?: () => void;
+  stopLayerActivity?: (layer: keyof MapLayers) => void;
 }
 
 export class EventHandlerManager implements AppModule {
@@ -283,19 +285,17 @@ export class EventHandlerManager implements AppModule {
     });
 
     const isLocalDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
-    if (this.ctx.isDesktopApp || isLocalDev) {
-      this.ctx.container.querySelectorAll<HTMLAnchorElement>('.variant-option').forEach(link => {
-        link.addEventListener('click', (e) => {
-          const variant = link.dataset.variant;
-          if (variant && variant !== SITE_VARIANT) {
-            e.preventDefault();
-            trackVariantSwitch(SITE_VARIANT, variant);
-            localStorage.setItem('worldmonitor-variant', variant);
-            window.location.reload();
-          }
+    this.ctx.container.querySelectorAll<HTMLAnchorElement>('.variant-option').forEach(link => {
+      link.addEventListener('click', (e) => {
+        const variant = link.dataset.variant;
+        if (!variant || variant === SITE_VARIANT) return;
+        e.preventDefault();
+        void this.navigateToVariant(variant, {
+          href: link.href,
+          isLocalDev,
         });
       });
-    }
+    });
 
     const fullscreenBtn = document.getElementById('fullscreenBtn');
     if (!this.ctx.isDesktopApp && fullscreenBtn) {
@@ -397,21 +397,8 @@ export class EventHandlerManager implements AppModule {
     menu.querySelectorAll<HTMLButtonElement>('.mobile-menu-variant').forEach(btn => {
       btn.addEventListener('click', () => {
         const variant = btn.dataset.variant;
-        if (variant && variant !== SITE_VARIANT) {
-          if (this.ctx.isDesktopApp || isLocalDev) {
-            trackVariantSwitch(SITE_VARIANT, variant);
-            localStorage.setItem('worldmonitor-variant', variant);
-            window.location.reload();
-          } else {
-            const hosts: Record<string, string> = {
-              full: 'https://worldmonitor.app',
-              tech: 'https://tech.worldmonitor.app',
-              finance: 'https://finance.worldmonitor.app',
-              happy: 'https://happy.worldmonitor.app',
-            };
-            if (hosts[variant]) window.location.href = hosts[variant];
-          }
-        }
+        if (!variant || variant === SITE_VARIANT) return;
+        void this.navigateToVariant(variant, { isLocalDev });
       });
     });
 
@@ -679,6 +666,30 @@ export class EventHandlerManager implements AppModule {
     }, 1500);
   }
 
+  private async exitFullscreenForNavigation(): Promise<void> {
+    if (!document.fullscreenElement) return;
+    try {
+      await document.exitFullscreen?.();
+    } catch { /* proceed with navigation regardless */ }
+  }
+
+  private async navigateToVariant(
+    variant: string,
+    options: { href?: string; isLocalDev: boolean },
+  ): Promise<void> {
+    trackVariantSwitch(SITE_VARIANT, variant);
+    await this.exitFullscreenForNavigation();
+
+    if (this.ctx.isDesktopApp || options.isLocalDev) {
+      localStorage.setItem('worldmonitor-variant', variant);
+      window.location.reload();
+      return;
+    }
+
+    const target = options.href || VARIANT_META[variant]?.url;
+    if (target) window.location.href = target;
+  }
+
   toggleFullscreen(): void {
     if (document.fullscreenElement) {
       try { void document.exitFullscreen()?.catch(() => { }); } catch { }
@@ -752,14 +763,21 @@ export class EventHandlerManager implements AppModule {
   setupUnifiedSettings(): void {
     this.ctx.unifiedSettings = new UnifiedSettings({
       getPanelSettings: () => this.ctx.panelSettings,
-      togglePanel: (key: string) => {
-        const config = this.ctx.panelSettings[key];
-        if (config) {
-          config.enabled = !config.enabled;
-          trackPanelToggled(key, config.enabled);
-          saveToStorage(STORAGE_KEYS.panels, this.ctx.panelSettings);
-          this.applyPanelSettings();
-        }
+      savePanelSettings: (panels: Record<string, PanelConfig>) => {
+        Object.entries(panels).forEach(([key, nextConfig]) => {
+          const current = this.ctx.panelSettings[key];
+          if (!current) {
+            this.ctx.panelSettings[key] = { ...nextConfig };
+            trackPanelToggled(key, nextConfig.enabled);
+            return;
+          }
+          if (current.enabled !== nextConfig.enabled) {
+            trackPanelToggled(key, nextConfig.enabled);
+          }
+          Object.assign(current, nextConfig);
+        });
+        saveToStorage(STORAGE_KEYS.panels, this.ctx.panelSettings);
+        this.applyPanelSettings();
       },
       getDisabledSources: () => this.ctx.disabledSources,
       toggleSource: (name: string) => {
@@ -903,6 +921,8 @@ export class EventHandlerManager implements AppModule {
 
       if (enabled) {
         this.callbacks.loadDataForLayer(layer);
+      } else {
+        this.callbacks.stopLayerActivity?.(layer as keyof MapLayers);
       }
     });
 
