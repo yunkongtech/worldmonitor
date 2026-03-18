@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { afterEach, describe, it } from 'node:test';
 
 import {
   forecastId,
@@ -50,6 +50,10 @@ import {
   computeAnalysisPriority,
   rankForecastsForAnalysis,
   filterPublishedForecasts,
+  selectForecastsForEnrichment,
+  parseForecastProviderOrder,
+  getForecastLlmCallOptions,
+  resolveForecastLlmProviders,
   buildFallbackScenario,
   buildFallbackBaseCase,
   buildFallbackEscalatoryCase,
@@ -64,6 +68,20 @@ import {
   DEFAULT_CASCADE_RULES,
   PROJECTION_CURVES,
 } from '../scripts/seed-forecasts.mjs';
+
+const originalForecastEnv = {
+  FORECAST_LLM_PROVIDER_ORDER: process.env.FORECAST_LLM_PROVIDER_ORDER,
+  FORECAST_LLM_COMBINED_PROVIDER_ORDER: process.env.FORECAST_LLM_COMBINED_PROVIDER_ORDER,
+  FORECAST_LLM_MODEL_OPENROUTER: process.env.FORECAST_LLM_MODEL_OPENROUTER,
+  FORECAST_LLM_COMBINED_MODEL_OPENROUTER: process.env.FORECAST_LLM_COMBINED_MODEL_OPENROUTER,
+};
+
+afterEach(() => {
+  for (const [key, value] of Object.entries(originalForecastEnv)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+});
 
 describe('forecastId', () => {
   it('same inputs produce same ID', () => {
@@ -916,6 +934,24 @@ describe('forecast evaluation and ranking', () => {
     assert.equal(ranked[0].title, rich.title);
   });
 
+  it('penalizes thin forecasts with weak grounding even at similar base probability', () => {
+    const grounded = makePrediction('political', 'France', 'Political instability: France', 0.64, 0.57, '7d', [
+      { type: 'unrest', value: 'France protest intensity remains elevated', weight: 0.3 },
+      { type: 'cii', value: 'France institutional stress index 68', weight: 0.25 },
+    ]);
+    grounded.newsContext = ['French unions warn of a broader escalation in strikes'];
+    grounded.trend = 'rising';
+    buildForecastCase(grounded);
+
+    const thin = makePrediction('conflict', 'Brazil', 'Active armed conflict: Brazil', 0.65, 0.57, '7d', [
+      { type: 'conflict_events', value: 'Localized violence persists', weight: 0.15 },
+    ]);
+    thin.trend = 'stable';
+    buildForecastCase(thin);
+
+    assert.ok(computeAnalysisPriority(grounded) > computeAnalysisPriority(thin));
+  });
+
   it('filters non-positive forecasts before publish while keeping positive probabilities', () => {
     const dropped = makePrediction('market', 'Red Sea', 'Shipping/Oil price impact from Suez Canal disruption', 0, 0.58, '30d', []);
     const kept = makePrediction('conflict', 'Iran', 'Escalation risk: Iran', 0.12, 0.58, '7d', []);
@@ -924,6 +960,80 @@ describe('forecast evaluation and ranking', () => {
     const published = filterPublishedForecasts(ranked);
     assert.equal(published.length, 1);
     assert.equal(published[0].id, kept.id);
+  });
+
+  it('selects enrichment targets from a broader, domain-balanced top slice', () => {
+    const conflictA = makePrediction('conflict', 'Iran', 'Conflict A', 0.72, 0.61, '7d', [
+      { type: 'cii', value: 'Iran CII 87', weight: 0.4 },
+      { type: 'ucdp', value: '3 UCDP conflict events', weight: 0.3 },
+    ]);
+    conflictA.newsContext = ['Iran military drills intensify after border incident'];
+    conflictA.trend = 'rising';
+    buildForecastCase(conflictA);
+
+    const conflictB = makePrediction('conflict', 'Israel', 'Conflict B', 0.71, 0.6, '7d', [
+      { type: 'ucdp', value: '4 UCDP conflict events', weight: 0.35 },
+      { type: 'theater', value: 'Eastern Mediterranean posture elevated', weight: 0.25 },
+    ]);
+    conflictB.newsContext = ['Regional officials warn of retaliation risk'];
+    conflictB.trend = 'rising';
+    buildForecastCase(conflictB);
+
+    const conflictC = makePrediction('conflict', 'Mexico', 'Conflict C', 0.7, 0.59, '7d', [
+      { type: 'conflict_events', value: 'Violence persists across multiple states', weight: 0.2 },
+    ]);
+    conflictC.trend = 'stable';
+    buildForecastCase(conflictC);
+
+    const cyberA = makePrediction('cyber', 'China', 'Cyber A', 0.69, 0.58, '7d', [
+      { type: 'cyber', value: 'Hostile malware hosting remains elevated', weight: 0.4 },
+      { type: 'news_corroboration', value: 'Security firms warn of sustained activity', weight: 0.2 },
+    ]);
+    cyberA.newsContext = ['Security researchers warn of renewed malware coordination'];
+    cyberA.trend = 'rising';
+    buildForecastCase(cyberA);
+
+    const cyberB = makePrediction('cyber', 'Russia', 'Cyber B', 0.67, 0.56, '7d', [
+      { type: 'cyber', value: 'C2 server concentration remains high', weight: 0.35 },
+      { type: 'news_corroboration', value: 'Government agencies issue new advisories', weight: 0.2 },
+    ]);
+    cyberB.newsContext = ['Authorities publish a fresh advisory on state-linked activity'];
+    cyberB.trend = 'rising';
+    buildForecastCase(cyberB);
+
+    const supplyChain = makePrediction('supply_chain', 'Red Sea', 'Shipping disruption: Red Sea', 0.68, 0.59, '7d', [
+      { type: 'chokepoint', value: 'Red Sea disruption detected', weight: 0.5 },
+      { type: 'gps_jamming', value: 'GPS interference near Red Sea', weight: 0.2 },
+    ]);
+    supplyChain.newsContext = ['Freight rates react to Red Sea rerouting'];
+    supplyChain.trend = 'rising';
+    buildForecastCase(supplyChain);
+
+    const market = makePrediction('market', 'Middle East', 'Oil price impact from Strait of Hormuz disruption', 0.73, 0.58, '30d', [
+      { type: 'chokepoint', value: 'Hormuz transit risk rises', weight: 0.5 },
+      { type: 'prediction_market', value: 'Oil breakout chatter increases', weight: 0.2 },
+    ]);
+    market.newsContext = ['Analysts warn of renewed stress in the Strait of Hormuz'];
+    market.calibration = { marketTitle: 'Will oil close above $90?', marketPrice: 0.65, drift: 0.05, source: 'polymarket' };
+    market.trend = 'rising';
+    buildForecastCase(market);
+
+    const selected = selectForecastsForEnrichment([
+      conflictA,
+      conflictB,
+      conflictC,
+      cyberA,
+      cyberB,
+      supplyChain,
+      market,
+    ]);
+
+    const enriched = [...selected.combined, ...selected.scenarioOnly];
+    assert.equal(enriched.length, 6);
+    assert.ok(enriched.some(pred => pred.domain === 'supply_chain'));
+    assert.ok(enriched.some(pred => pred.domain === 'market'));
+    assert.ok(enriched.filter(pred => pred.domain === 'conflict').length <= 2);
+    assert.ok(enriched.filter(pred => pred.domain === 'cyber').length <= 2);
   });
 });
 
@@ -979,6 +1089,61 @@ describe('forecast change tracking', () => {
     const summary = buildChangeSummary(pred, null, items);
     assert.match(summary, /new in the current run/i);
     assert.ok(items[0].includes('New forecast surfaced'));
+  });
+});
+
+describe('forecast llm overrides', () => {
+  it('parses provider order safely', () => {
+    assert.equal(parseForecastProviderOrder(''), null);
+    assert.deepEqual(parseForecastProviderOrder('openrouter, groq, openrouter, invalid'), ['openrouter', 'groq']);
+  });
+
+  it('keeps default provider order when no override is set', () => {
+    delete process.env.FORECAST_LLM_PROVIDER_ORDER;
+    delete process.env.FORECAST_LLM_COMBINED_PROVIDER_ORDER;
+    delete process.env.FORECAST_LLM_MODEL_OPENROUTER;
+    delete process.env.FORECAST_LLM_COMBINED_MODEL_OPENROUTER;
+
+    const options = getForecastLlmCallOptions('combined');
+    const providers = resolveForecastLlmProviders(options);
+
+    assert.deepEqual(options.providerOrder, ['groq', 'openrouter']);
+    assert.equal(providers[0]?.name, 'groq');
+    assert.equal(providers[0]?.model, 'llama-3.1-8b-instant');
+    assert.equal(providers[1]?.name, 'openrouter');
+    assert.equal(providers[1]?.model, 'google/gemini-2.5-flash');
+  });
+
+  it('supports a stronger combined-model override without changing scenario defaults', () => {
+    process.env.FORECAST_LLM_COMBINED_PROVIDER_ORDER = 'openrouter';
+    process.env.FORECAST_LLM_COMBINED_MODEL_OPENROUTER = 'google/gemini-2.5-pro';
+
+    const combinedOptions = getForecastLlmCallOptions('combined');
+    const combinedProviders = resolveForecastLlmProviders(combinedOptions);
+    const scenarioOptions = getForecastLlmCallOptions('scenario');
+    const scenarioProviders = resolveForecastLlmProviders(scenarioOptions);
+
+    assert.deepEqual(combinedOptions.providerOrder, ['openrouter']);
+    assert.equal(combinedProviders.length, 1);
+    assert.equal(combinedProviders[0]?.name, 'openrouter');
+    assert.equal(combinedProviders[0]?.model, 'google/gemini-2.5-pro');
+
+    assert.deepEqual(scenarioOptions.providerOrder, ['groq', 'openrouter']);
+    assert.equal(scenarioProviders[0]?.name, 'groq');
+    assert.equal(scenarioProviders[1]?.model, 'google/gemini-2.5-flash');
+  });
+
+  it('lets a global provider order and openrouter model apply to non-combined stages', () => {
+    process.env.FORECAST_LLM_PROVIDER_ORDER = 'openrouter';
+    process.env.FORECAST_LLM_MODEL_OPENROUTER = 'google/gemini-2.5-flash-lite-preview';
+
+    const options = getForecastLlmCallOptions('scenario');
+    const providers = resolveForecastLlmProviders(options);
+
+    assert.deepEqual(options.providerOrder, ['openrouter']);
+    assert.equal(providers.length, 1);
+    assert.equal(providers[0]?.name, 'openrouter');
+    assert.equal(providers[0]?.model, 'google/gemini-2.5-flash-lite-preview');
   });
 });
 
@@ -1485,6 +1650,16 @@ describe('detectCyberScenarios', () => {
   it('handles empty input', () => {
     assert.equal(detectCyberScenarios({}).length, 0);
   });
+
+  it('caps broad cyber output to the top-ranked countries', () => {
+    const threats = [];
+    for (let i = 0; i < 20; i++) {
+      const country = `Country-${i}`;
+      for (let j = 0; j < 5; j++) threats.push({ country, type: 'phishing' });
+    }
+    const result = detectCyberScenarios({ cyberThreats: { threats } });
+    assert.equal(result.length, 12);
+  });
 });
 
 describe('detectGpsJammingScenarios', () => {
@@ -1585,5 +1760,46 @@ describe('discoverGraphCascades', () => {
     discoverGraphCascades(preds, graph);
     const graphCascades = preds[0].cascades.filter(c => c.effect.includes('graph:'));
     assert.equal(graphCascades.length, 0, 'same domain should not cascade');
+  });
+});
+
+describe('forecast quality gating', () => {
+  it('reserves scenario enrichment slots for scarce market and military forecasts', () => {
+    const predictions = [
+      makePrediction('cyber', 'A', 'Cyber A', 0.7, 0.55, '7d', [{ type: 'cyber', value: '8 threats', weight: 0.5 }]),
+      makePrediction('cyber', 'B', 'Cyber B', 0.68, 0.55, '7d', [{ type: 'cyber', value: '7 threats', weight: 0.5 }]),
+      makePrediction('conflict', 'C', 'Conflict C', 0.66, 0.6, '7d', [{ type: 'ucdp', value: '12 events', weight: 0.5 }]),
+      makePrediction('market', 'Middle East', 'Oil price impact', 0.4, 0.5, '30d', [{ type: 'news_corroboration', value: 'Oil traders react', weight: 0.3 }]),
+      makePrediction('military', 'Korean Peninsula', 'Elevated military air activity', 0.34, 0.5, '7d', [{ type: 'mil_surge', value: 'fighter surge', weight: 0.4 }]),
+    ];
+    buildForecastCases(predictions);
+    const selected = selectForecastsForEnrichment(predictions, { maxCombined: 2, maxScenario: 2, maxPerDomain: 2, minReadiness: 0 });
+    assert.equal(selected.combined.length, 2);
+    assert.equal(selected.scenarioOnly.length, 2);
+    assert.ok(selected.scenarioOnly.some(item => item.domain === 'market'));
+    assert.ok(selected.scenarioOnly.some(item => item.domain === 'military'));
+    assert.deepEqual(selected.telemetry.reservedScenarioDomains.sort(), ['market', 'military']);
+  });
+
+  it('filters only the weakest fallback forecasts from publish output', () => {
+    const weak = makePrediction('cyber', 'Thinland', 'Cyber threat concentration: Thinland', 0.11, 0.32, '7d', [
+      { type: 'cyber', value: '5 threats (phishing)', weight: 0.5 },
+    ]);
+    buildForecastCases([weak]);
+    weak.traceMeta = { narrativeSource: 'fallback' };
+    weak.readiness = { overall: 0.28 };
+    weak.analysisPriority = 0.05;
+
+    const strong = makePrediction('market', 'Middle East', 'Oil price impact from Strait of Hormuz disruption', 0.22, 0.48, '7d', [
+      { type: 'news_corroboration', value: 'Oil prices moved on shipping risk', weight: 0.4 },
+    ]);
+    buildForecastCases([strong]);
+    strong.traceMeta = { narrativeSource: 'fallback' };
+    strong.readiness = { overall: 0.52 };
+    strong.analysisPriority = 0.11;
+
+    const published = filterPublishedForecasts([weak, strong]);
+    assert.equal(published.length, 1);
+    assert.equal(published[0].id, strong.id);
   });
 });
