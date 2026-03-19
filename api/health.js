@@ -73,6 +73,7 @@ const STANDALONE_KEYS = {
   chokepointTransits:    'supply_chain:chokepoint_transits:v1',
   transitSummaries:      'supply_chain:transit-summaries:v1',
   thermalEscalation:     'thermal:escalation:v1',
+  tariffTrendsUs:        'trade:tariffs:v1:840:all:10',
 };
 
 const SEED_META = {
@@ -95,7 +96,7 @@ const SEED_META = {
   commodityQuotes:  { key: 'seed-meta:market:commodities',    maxStaleMin: 30 },
   // RPC/warm-ping keys — seed-meta written by relay loops or handlers
   // serviceStatuses: moved to ON_DEMAND — RPC-populated, no dedicated seed, goes stale when no users visit
-  cableHealth:      { key: 'seed-meta:cable-health',              maxStaleMin: 60 },
+  cableHealth:      { key: 'seed-meta:cable-health',              maxStaleMin: 90 }, // ais-relay warm-ping runs every 30min; 90min = 3× interval catches missed pings without false positives
   macroSignals:     { key: 'seed-meta:economic:macro-signals',    maxStaleMin: 60 },
   bisPolicy:        { key: 'seed-meta:economic:bis:policy',       maxStaleMin: 10080 },
   bisExchange:      { key: 'seed-meta:economic:bis:eer',          maxStaleMin: 10080 },
@@ -114,8 +115,8 @@ const SEED_META = {
   satellites:       { key: 'seed-meta:intelligence:satellites',    maxStaleMin: 180 },
   weatherAlerts:    { key: 'seed-meta:weather:alerts',             maxStaleMin: 30 },
   spending:         { key: 'seed-meta:economic:spending',          maxStaleMin: 120 },
-  techEvents:       { key: 'seed-meta:research:tech-events',       maxStaleMin: 420 },
-  gdeltIntel:       { key: 'seed-meta:intelligence:gdelt-intel',   maxStaleMin: 120 },
+  techEvents:       { key: 'seed-meta:research:tech-events',       maxStaleMin: 480 },
+  gdeltIntel:       { key: 'seed-meta:intelligence:gdelt-intel',   maxStaleMin: 150 }, // 2h cron + 30min grace; CACHE_TTL is 24h so merge fallback always survives
   forecasts:        { key: 'seed-meta:forecast:predictions',       maxStaleMin: 90 },
   sectors:          { key: 'seed-meta:market:sectors',             maxStaleMin: 30 },
   techReadiness:    { key: 'seed-meta:economic:worldbank-techreadiness:v1', maxStaleMin: 10080 },
@@ -129,12 +130,13 @@ const SEED_META = {
   corridorrisk:        { key: 'seed-meta:supply_chain:corridorrisk',         maxStaleMin: 120 },
   chokepointTransits:  { key: 'seed-meta:supply_chain:chokepoint_transits',  maxStaleMin: 15 },
   transitSummaries:    { key: 'seed-meta:supply_chain:transit-summaries',    maxStaleMin: 15 },
-  usniFleet:           { key: 'seed-meta:military:usni-fleet',               maxStaleMin: 420 },
-  securityAdvisories:  { key: 'seed-meta:intelligence:advisories',           maxStaleMin: 90 },
+  usniFleet:           { key: 'seed-meta:military:usni-fleet',               maxStaleMin: 480 },
+  securityAdvisories:  { key: 'seed-meta:intelligence:advisories',           maxStaleMin: 120 },
   customsRevenue:      { key: 'seed-meta:trade:customs-revenue',              maxStaleMin: 1440 },
   sanctionsPressure:   { key: 'seed-meta:sanctions:pressure',                 maxStaleMin: 720 },
   radiationWatch:      { key: 'seed-meta:radiation:observations',             maxStaleMin: 30 },
   thermalEscalation:   { key: 'seed-meta:thermal:escalation',                 maxStaleMin: 240 },
+  tariffTrendsUs:      { key: 'seed-meta:trade:tariffs:v1:840:all:10',        maxStaleMin: 900 },
 };
 
 // Standalone keys that are populated on-demand by RPC handlers (not seeds).
